@@ -1,0 +1,25 @@
+﻿node_modules/
+dist/
+build/
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.pyc
+*.db
+*.sqlite
+.DS_Store
+.vscode/
+.idea/
+
+# Browser/debug profiles - never push
+.chrome-*/
+chrome-*/
+Default/
+Extensions/
+
+# Logs/cache
+*.log
+.cache/
+coverage/
