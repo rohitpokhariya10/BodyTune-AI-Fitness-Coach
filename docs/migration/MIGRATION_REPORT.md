@@ -1,6 +1,6 @@
 # BodyTune Python-to-Express migration report
 
-Status: Phase 2 foundation implemented in parallel; feature migration not started
+Status: Parallel Express identity/profile/session/CSRF/SMTP and live-workout persistence foundations implemented; frontend/auth traffic cutover and full acceptance verification remain open
 
 Audit date: 2026-07-18
 
@@ -57,7 +57,41 @@ Verification evidence:
 | Docker Compose render | Passed. |
 | Docker image build | Not run because the local Docker daemon was unavailable; this remains an open foundation check. |
 
-No frontend route was pointed to Express, no authentication/product model was introduced, and no Python or SQLite implementation was removed in this foundation slice.
+In that initial foundation slice, no frontend route was pointed to Express, no authentication/product model was introduced, and no Python or SQLite implementation was removed.
+
+## Secure identity/profile and live-workout implementation update
+
+A subsequent authorized parallel implementation on 2026-07-18 added the first security-sensitive feature foundations without removing the Python reference backend or migrating production traffic.
+
+Identity, profile, session and email capabilities now implemented in `backend-node/` include:
+
+- A Mongo-backed `User` identity root with normalized unique email, partial unique Google-subject and legacy-ID indexes, hidden password hashes, role/status, verified-email state, session versioning and an embedded bounded profile/nutrition-goal projection.
+- Mongo-backed sessions using `express-session` and `connect-mongo`. Cookies are host-only, `HttpOnly`, `Path=/`, bounded by TTL and configured for `Secure`, a selectable `SameSite` policy, `__Host-` naming and rotation-ready secrets in production. Successful local/Google authentication regenerates and saves the session; logout/reset destroys the current session and clears matching cookie attributes. The final `SameSite` value still depends on the approved deployment topology.
+- Server-derived authentication that reloads only active users by user ID plus session version. Password reset increments the session version, invalidating older sessions; role and status lifecycle operations still need their later administrative implementation and tests.
+- Optional local registration/login, registration verification, resend, forgot-password and reset flows using purpose-separated challenges, an OWASP-baseline scrypt password hash, keyed HMAC OTP/email digests, attempt caps, atomic challenge consumption, expiry TTL, resend cooldowns and generic non-enumerating responses. The new registration contract cannot request an admin role, and every local-auth route is absent when local auth is disabled.
+- A conditional, isolated Passport Google OAuth adapter with session-backed provider `state`, an exact configured callback, verified-email extraction, allowlisted session-held return paths and redirects that contain neither tokens nor personal data. The callback disables Passport login-session serialization and never stores provider access/refresh tokens. Failed/invalid-state flows redirect only to the fixed frontend login URL; automatic linking rejects unverified, inactive, admin or unverified-local-account conflicts.
+- Explicit CSRF defense for unsafe methods using an allowlisted Origin/Referer plus a bounded session token compared in constant time. Tokens rotate when a session is established and are exposed through the dedicated CSRF-token endpoint.
+- A production-shaped Nodemailer gateway with pooled SMTP connections, TLS 1.2 minimum, bounded DNS/connection/greeting/socket timeouts, purpose-specific non-medical text and minimal HTML OTP messages, disabled file/URL access and safe operational error mapping. When local auth or SMTP configuration is unavailable it fails closed; it never logs the recipient or OTP.
+- Auth, profile and workout routers composed under `/api/v1`, including session-authenticated `/auth/me`, logout, conditional local/Google routes, owner-scoped `/profiles/me` and feature-specific authentication/OTP rate-limit middleware.
+
+The live-workout persistence foundation now includes:
+
+- One strict `workout_sessions` collection for squat, push-up, crunch and bicep curl. It stores bounded completion metrics plus versioned pose-engine/rules metadata and an embedded deterministic recommendation snapshot; it never stores an image, camera frame or pose landmark.
+- Ownership derived from the authenticated session, not a request `user_id`; owner-only complete/list/get/soft-delete/summary routes; cursor-bounded filtering and Mongo indexes for owner history, exercise history and unique `(userId, clientSessionId)` idempotency.
+- Atomic completion/retry behavior: one UUID client session maps to one persisted session and one recommendation snapshot, and a replay returns the original record instead of duplicating it.
+- Frontend preparation that carries the selected exercise into the live route, pins MediaPipe Tasks Vision `0.10.34` and pose model version `1`, and sends only the bounded completion summary to the atomic endpoint. All camera frames, derived landmarks, joint angles and live inference remain inside the browser.
+
+This is an implemented foundation, not a cutover declaration. The React authentication provider and shared API client still persist/send bearer JWTs from `localStorage`, use `credentials: "omit"`, and do not yet acquire/send the new CSRF token. Consequently, the prepared workout save call and all new session routes are not yet an accepted end-to-end user flow.
+
+Remaining acceptance gates include:
+
+- Complete and record real Mongo-backed auth/profile/workout HTTP integration tests, index verification, cross-user negative tests, session-expiry/fixation/revocation tests and provider failure tests.
+- Run and record the full backend format, lint, typecheck, build, coverage and open-handle suites together after integration; add component/browser tests for the prepared workout flow and its session-expiry/failure states.
+- Configure and verify real production Google credentials/callback, SMTP provider/sender domain, final deployment origins/proxy/cookie attributes and delivery/abuse controls.
+- Complete the coordinated frontend session/CSRF migration, remove browser JWT/admin-key behavior, verify string identifiers and exercise save/retry/session-expiry UX, and only then switch traffic.
+- Define and test controlled admin bootstrap plus role/status/account lifecycle revocation; finish incident/data, provider, privacy, migration, container and operational gates elsewhere in this report.
+
+Ten focused identity/profile/session/CSRF/SMTP/OAuth suites (32 tests) passed, along with their targeted lint, format, strict TypeScript and production-build checks. The workout module's 35 scoped tests passed with 94.11% statement, 75.94% branch, 91.66% function and 94.17% line coverage; the affected frontend also passed its Prettier check, TypeScript check and Vite production build, retaining only the existing bundle-size warning. This is useful component/build evidence, but it does not satisfy the full integration, browser, migration or production-readiness gates above; a single full-worktree quality run is still required after all parallel changes settle.
 
 ## Audit scope and evidence
 
@@ -135,6 +169,8 @@ Startup seeds users and foods only. Although seed functions for subscription pla
 
 ## Frontend route and page inventory
 
+The route and feature inventory tables below record the Phase 1 legacy baseline. The implementation update above documents parallel replacement progress; no baseline row should be read as a current replacement-backend or traffic-cutover claim.
+
 | Access | Route | Page/behavior | Audit state |
 | --- | --- | --- | --- |
 | Public | `/` | Marketing landing page and theme toggle | Preserve. |
@@ -194,8 +230,8 @@ The detailed 66-route inventory and migration disposition is maintained in [API_
 | UserProfile | Physical/profile and nutrition goals; ID equals AuthUser ID only by convention, not by foreign key | Embed in User unless profile write volume later proves separation necessary. Never fabricate age, height, or weight when onboarding is incomplete. |
 | OTPVerification | Plaintext code, email, purpose, expiry, use flag | Do not import. If local auth remains, create OtpChallenge with a keyed hash, purpose, bounded attempts, consumed timestamp, expiry TTL, and no reusable login semantics for reset challenges. |
 | ActivityLog | One daily aggregate per user; read/modify/write increments and server-local date | ActivityDaily with unique userId + dateKey, timezone snapshot, and atomic increments. Add allowlisted ActivityEvent records only where audit or analytics needs them. |
-| WorkoutResult | Client session metrics and feedback | WorkoutResult referencing User, with bounded metrics, supported exercise enum, client session idempotency key, and userId + createdAt indexes. |
-| Recommendation | Rule output tied to a user and result | Recommendation referencing the owned result, rule version, and a uniqueness/idempotency rule so retries do not duplicate output. |
+| WorkoutResult | Client session metrics and feedback | Implemented as an owned WorkoutSession with bounded metrics, all four exercise enums, versioned pose/rules metadata, a client-session idempotency key, and owner/history indexes. |
+| Recommendation | Rule output tied to a user and result | Implemented as a versioned snapshot embedded atomically in its owned WorkoutSession so retries cannot duplicate or detach it. Separate only if a later lifecycle/query need is approved. |
 | FoodItem | System and globally visible custom foods; aliases are comma-delimited | FoodItem with source, optional ownerId, normalizedName, alias array, nutrient snapshot fields, and partial unique indexes for system versus per-owner custom items. |
 | MealPhoto | Public local path and mostly unused analysis state | MealAsset referencing its owner and a private storage provider/key. Store MIME, bytes, dimensions, checksum, status and retention timestamps; never expose the provider key directly. |
 | DietLog | Food reference plus nutrient snapshot and optional photo | DietLog referencing User and optional FoodItem/MealAsset while retaining the consumed name/nutrient snapshot. Index userId + loggedAt and userId + mealType + loggedAt. |
@@ -403,7 +439,7 @@ Recommended deployment is same-site behind one HTTPS origin or reverse proxy, fo
 4. Passport Google OAuth must use state, an exact callback, and an allowlisted return target stored in the session. Link an existing legacy account only when Google supplies a verified email. OAuth input can never grant an admin role.
 5. Use a sessionVersion or equivalent revocation field so password reset, account disablement, role changes and logout-all invalidate existing sessions.
 6. Verify Origin/Referer for unsafe methods and use a CSRF token strategy suited to the final topology. OAuth state is required but is not general request CSRF protection.
-7. If local auth remains, use Argon2id/bcrypt with an explicit upgrade strategy, generic enumeration-safe responses, password rules, keyed-hash OTPs, purpose separation, attempt caps and layered rate limits. Do not silently accept exposed legacy hashes as normal production credentials.
+7. If local auth remains, use a reviewed memory-hard password hash with an explicit upgrade strategy. The parallel foundation uses OWASP-baseline scrypt; retain generic enumeration-safe responses, password rules, keyed-hash OTPs, purpose separation, attempt caps and layered rate limits. Do not silently accept exposed legacy hashes as normal production credentials.
 8. Remove browser-stored bearer tokens, VITE_ADMIN_KEY, X-ADMIN-KEY, public admin selection and caller-supplied identity.
 
 ## API and frontend compatibility strategy
@@ -438,8 +474,8 @@ At minimum:
 | users | unique normalized email; unique sparse providers.google.subject; role + status where admin queries require it |
 | sessions | TTL on expires as created by connect-mongo; user/session-version lookup as required |
 | otp_challenges | TTL on expiresAt; email hash + purpose + createdAt; never index plaintext email/code logs |
-| workout_results | userId + createdAt descending; userId + exerciseType + createdAt; unique userId + clientSessionId |
-| recommendations | userId + createdAt; unique resultId + ruleVersion |
+| workout_sessions | Implemented replacement for separate result/recommendation writes: userId + completedAt descending; userId + workoutType + completedAt; unique userId + clientSessionId; embedded versioned recommendation snapshot |
+| recommendations | No separate collection in the current workout foundation; revisit only if recommendation lifecycle/query needs later justify separation |
 | foods | normalized searchable fields; partial unique system normalizedName; partial unique ownerId + normalizedName for custom foods |
 | meal_assets | userId + createdAt; storage status + createdAt for cleanup |
 | diet_logs | userId + loggedAt descending; userId + mealType + loggedAt |
@@ -536,4 +572,4 @@ The migration is complete only when:
 
 Approve the parallel strangler migration, beginning with foundation plus session identity after the decision gates above are acknowledged. Do not translate all 66 FastAPI routes one for one: preserve the product behaviors the React application actually uses, remove insecure/dead arbitrary-user surfaces, and use contract tests to make intentional incompatibilities visible.
 
-The first implementation milestone should be a production-shaped Express service with Mongo readiness, secure middleware, tests and Google session login, alongside the untouched Python backend. It should not yet import the tracked database or activate payments/media until their ownership, providers and exposure response are decided.
+The first implementation milestone was a production-shaped Express service with Mongo readiness and secure middleware; the parallel identity/profile/workout foundations now extend it with session/Google/local-auth components and owner-scoped workout persistence alongside the untouched Python backend. The milestone is not accepted for traffic until the integration, browser-session and provider gates above pass. It must not import the tracked database or activate payments/media until their ownership, providers and exposure response are decided.

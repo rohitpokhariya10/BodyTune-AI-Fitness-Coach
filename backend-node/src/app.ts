@@ -1,10 +1,11 @@
 import cookieParser from 'cookie-parser';
-import express, { type Express, type Router } from 'express';
+import express, { type Express, type RequestHandler, type Router } from 'express';
 import helmet from 'helmet';
 import hpp from 'hpp';
 import type { Logger } from 'pino';
 
 import type { Environment } from './config/env';
+import { createSessionMiddleware } from './config/session';
 import { createCorsMiddleware } from './middlewares/cors.middleware';
 import { createErrorMiddleware } from './middlewares/error.middleware';
 import { createHttpLoggerMiddleware } from './middlewares/http-logger.middleware';
@@ -24,14 +25,16 @@ export interface AppDependencies {
   environment: Environment;
   healthRepository?: HealthRepository;
   logger: Logger;
+  sessionMiddleware?: false | RequestHandler;
 }
 
-export const createApp = ({
-  apiRouter = createApiRouter(),
-  environment,
-  healthRepository = new MongooseHealthRepository(),
-  logger,
-}: AppDependencies): Express => {
+export const createApp = (dependencies: AppDependencies): Express => {
+  const { environment, healthRepository = new MongooseHealthRepository(), logger } = dependencies;
+  const apiRouter = dependencies.apiRouter ?? createApiRouter(environment);
+  const sessionMiddleware =
+    dependencies.sessionMiddleware === false
+      ? undefined
+      : (dependencies.sessionMiddleware ?? createSessionMiddleware(environment));
   const app = express();
 
   app.disable('x-powered-by');
@@ -56,6 +59,10 @@ export const createApp = ({
   app.use(hpp());
   app.use(rejectUnsafeMongoInput);
   app.use(createGlobalRateLimit(environment));
+
+  if (sessionMiddleware) {
+    app.use(sessionMiddleware);
+  }
 
   app.use('/api/v1', apiRouter);
 

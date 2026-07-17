@@ -191,9 +191,18 @@ describe('Express foundation', () => {
     const router = Router();
     router.get('/explode', () => Promise.reject(new Error('private implementation detail')));
     const environment = createTestEnvironment({
+      AUTH_GOOGLE_ENABLED: 'true',
+      AUTH_LOCAL_ENABLED: 'false',
+      COOKIE_SECURE: 'true',
       CORS_ORIGINS: 'https://app.example.com',
+      FRONTEND_URL: 'https://app.example.com',
+      GOOGLE_CALLBACK_URL: 'https://api.example.com/api/v1/auth/google/callback',
+      GOOGLE_CLIENT_ID: 'foundation-test-client-id',
+      GOOGLE_CLIENT_SECRET: 'foundation-test-client-secret',
       MONGODB_URI: 'mongodb+srv://service:secret@cluster.example.com/bodytune',
       NODE_ENV: 'production',
+      SESSION_COOKIE_NAME: '__Host-bodytune.sid',
+      SESSION_SECRETS: '65d885b4e95ce00217fef04222855b34011f709fdc7d519601c5e2f7c04c8f29',
       TRUST_PROXY: '1',
     });
     const application = createTestApp({ apiRouter: router, environment });

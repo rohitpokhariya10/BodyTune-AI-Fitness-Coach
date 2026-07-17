@@ -4,6 +4,31 @@ import { z } from 'zod';
 const integerFromString = (minimum: number, maximum: number): z.ZodNumber =>
   z.coerce.number().int().min(minimum).max(maximum);
 
+const booleanFromString = (
+  defaultValue: boolean,
+): z.ZodEffects<z.ZodDefault<z.ZodEnum<['true', 'false']>>, boolean> =>
+  z
+    .enum(['true', 'false'])
+    .default(defaultValue ? 'true' : 'false')
+    .transform((value) => value === 'true');
+
+const optionalTrimmedString = (
+  minimumLength = 1,
+): z.ZodEffects<z.ZodOptional<z.ZodString>, string | undefined, unknown> =>
+  z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().trim().min(minimumLength).optional(),
+  );
+
+const exactUrlSchema = (message: string): z.ZodEffects<z.ZodString, string, string> =>
+  z
+    .string()
+    .url(message)
+    .refine((value) => {
+      const url = new URL(value);
+      return url.username === '' && url.password === '' && url.hash === '';
+    }, message);
+
 const trustProxySchema = z
   .string()
   .default('false')
@@ -62,6 +87,50 @@ const corsOriginsSchema = z
     'Every CORS origin must be an exact HTTP or HTTPS origin',
   );
 
+const sessionSecretsSchema = z
+  .string()
+  .default('development-only-session-secret-change-before-production-0000000000000001')
+  .transform((value) =>
+    value
+      .split(',')
+      .map((secret) => secret.trim())
+      .filter(Boolean),
+  )
+  .refine(
+    (secrets) => secrets.length > 0 && secrets.length <= 4,
+    'Provide between one and four session secrets',
+  )
+  .refine(
+    (secrets) => secrets.every((secret) => secret.length >= 64),
+    'Every session secret must contain at least 64 characters',
+  )
+  .refine(
+    (secrets) => new Set(secrets).size === secrets.length,
+    'Session secrets must not contain duplicates',
+  );
+
+const allowedReturnPathsSchema = z
+  .string()
+  .default('/dashboard,/admin')
+  .transform((value) =>
+    value
+      .split(',')
+      .map((path) => path.trim())
+      .filter(Boolean),
+  )
+  .refine(
+    (paths) => paths.length > 0 && paths.length <= 10,
+    'Provide between one and ten OAuth return paths',
+  )
+  .refine(
+    (paths) => paths.every((path) => /^\/(?!\/)[A-Za-z0-9/_-]*$/.test(path)),
+    'OAuth return paths must be absolute application paths without query strings',
+  )
+  .refine(
+    (paths) => new Set(paths).size === paths.length,
+    'OAuth return paths must not contain duplicates',
+  );
+
 const bodySizeInBytes = (value: string): number => {
   const match = /^(\d+)(b|kb|mb)$/i.exec(value);
 
@@ -109,7 +178,45 @@ export const environmentSchema = z
       .default('100kb'),
     GLOBAL_RATE_LIMIT_WINDOW_MS: integerFromString(1_000, 86_400_000).default(900_000),
     GLOBAL_RATE_LIMIT_MAX: integerFromString(1, 100_000).default(300),
+    AUTH_RATE_LIMIT_WINDOW_MS: integerFromString(60_000, 86_400_000).default(900_000),
+    AUTH_RATE_LIMIT_MAX: integerFromString(1, 1_000).default(20),
+    OTP_RATE_LIMIT_MAX: integerFromString(1, 100).default(5),
     SHUTDOWN_TIMEOUT_MS: integerFromString(1_000, 60_000).default(10_000),
+    API_DOCS_ENABLED: booleanFromString(true),
+    AUTH_LOCAL_ENABLED: booleanFromString(true),
+    AUTH_GOOGLE_ENABLED: booleanFromString(false),
+    SESSION_SECRETS: sessionSecretsSchema,
+    SESSION_COOKIE_NAME: z.string().trim().min(1).max(128).default('bodytune.sid'),
+    SESSION_TTL_SECONDS: integerFromString(300, 2_592_000).default(604_800),
+    COOKIE_SECURE: booleanFromString(false),
+    COOKIE_SAME_SITE: z.enum(['lax', 'strict', 'none']).default('lax'),
+    OTP_PEPPER: z
+      .string()
+      .min(32)
+      .default('development-only-otp-pepper-change-before-production-00000001'),
+    OTP_TTL_SECONDS: integerFromString(120, 1_800).default(600),
+    OTP_RESEND_COOLDOWN_SECONDS: integerFromString(30, 600).default(60),
+    OTP_MAX_ATTEMPTS: integerFromString(3, 10).default(5),
+    SMTP_HOST: optionalTrimmedString(),
+    SMTP_PORT: integerFromString(1, 65_535).default(587),
+    SMTP_SECURE: booleanFromString(false),
+    SMTP_REQUIRE_TLS: booleanFromString(true),
+    SMTP_USER: optionalTrimmedString(),
+    SMTP_PASSWORD: optionalTrimmedString(),
+    SMTP_FROM: z.preprocess(
+      (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+      z.string().trim().email().optional(),
+    ),
+    GOOGLE_CLIENT_ID: optionalTrimmedString(),
+    GOOGLE_CLIENT_SECRET: optionalTrimmedString(),
+    GOOGLE_CALLBACK_URL: z.preprocess(
+      (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+      exactUrlSchema('GOOGLE_CALLBACK_URL must be an absolute URL').optional(),
+    ),
+    FRONTEND_URL: exactUrlSchema('FRONTEND_URL must be an absolute URL').default(
+      'http://localhost:5173',
+    ),
+    OAUTH_ALLOWED_RETURN_PATHS: allowedReturnPathsSchema,
   })
   .superRefine((value, context) => {
     if (
@@ -156,6 +263,102 @@ export const environmentSchema = z
         message: 'REQUEST_BODY_LIMIT must not exceed 1mb',
         path: ['REQUEST_BODY_LIMIT'],
       });
+    }
+
+    if (value.COOKIE_SAME_SITE === 'none' && !value.COOKIE_SECURE) {
+      context.addIssue({
+        code: 'custom',
+        message: 'COOKIE_SAME_SITE=none requires COOKIE_SECURE=true',
+        path: ['COOKIE_SECURE'],
+      });
+    }
+
+    if (value.NODE_ENV === 'production') {
+      if (!value.AUTH_LOCAL_ENABLED && !value.AUTH_GOOGLE_ENABLED) {
+        context.addIssue({
+          code: 'custom',
+          message: 'At least one production authentication provider must be enabled',
+          path: ['AUTH_LOCAL_ENABLED'],
+        });
+      }
+
+      if (!value.COOKIE_SECURE) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Production session cookies must be secure',
+          path: ['COOKIE_SECURE'],
+        });
+      }
+
+      if (!value.SESSION_COOKIE_NAME.startsWith('__Host-')) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Production session cookie name must use the __Host- prefix',
+          path: ['SESSION_COOKIE_NAME'],
+        });
+      }
+
+      if (
+        value.SESSION_SECRETS.some((secret) => /development|replace|example|change/i.test(secret))
+      ) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Production session secrets must not use example values',
+          path: ['SESSION_SECRETS'],
+        });
+      }
+
+      if (value.AUTH_LOCAL_ENABLED) {
+        if (/development|replace|example|change/i.test(value.OTP_PEPPER)) {
+          context.addIssue({
+            code: 'custom',
+            message: 'Production OTP pepper must not use an example value',
+            path: ['OTP_PEPPER'],
+          });
+        }
+
+        for (const field of ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASSWORD', 'SMTP_FROM'] as const) {
+          if (!value[field]) {
+            context.addIssue({
+              code: 'custom',
+              message: field + ' is required when local authentication is enabled in production',
+              path: [field],
+            });
+          }
+        }
+      }
+
+      if (value.AUTH_GOOGLE_ENABLED) {
+        for (const field of [
+          'GOOGLE_CLIENT_ID',
+          'GOOGLE_CLIENT_SECRET',
+          'GOOGLE_CALLBACK_URL',
+        ] as const) {
+          if (!value[field]) {
+            context.addIssue({
+              code: 'custom',
+              message: field + ' is required when Google authentication is enabled',
+              path: [field],
+            });
+          }
+        }
+      }
+
+      if (!value.FRONTEND_URL.startsWith('https://')) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Production FRONTEND_URL must use HTTPS',
+          path: ['FRONTEND_URL'],
+        });
+      }
+
+      if (value.GOOGLE_CALLBACK_URL && !value.GOOGLE_CALLBACK_URL.startsWith('https://')) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Production GOOGLE_CALLBACK_URL must use HTTPS',
+          path: ['GOOGLE_CALLBACK_URL'],
+        });
+      }
     }
   });
 

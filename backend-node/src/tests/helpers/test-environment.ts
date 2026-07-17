@@ -1,4 +1,4 @@
-import type { Express, Router } from 'express';
+import { Router, type Express, type RequestHandler } from 'express';
 
 import { createApp } from '../../app';
 import { parseEnvironment, type Environment } from '../../config/env';
@@ -38,13 +38,15 @@ export const createTestApp = (options?: {
   apiRouter?: Router;
   environment?: Environment;
   healthRepository?: HealthRepository;
+  sessionMiddleware?: false | RequestHandler;
 }): Express => {
   const environment = options?.environment ?? createTestEnvironment();
 
   return createApp({
-    ...(options?.apiRouter ? { apiRouter: options.apiRouter } : {}),
+    apiRouter: options?.apiRouter ?? Router(),
     environment,
     healthRepository: options?.healthRepository ?? new FakeHealthRepository(),
     logger: createLogger(environment),
+    sessionMiddleware: options?.sessionMiddleware ?? false,
   });
 };

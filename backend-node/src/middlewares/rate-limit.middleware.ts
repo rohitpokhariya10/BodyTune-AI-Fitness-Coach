@@ -17,3 +17,20 @@ export const createGlobalRateLimit = (environment: Environment): RequestHandler 
     standardHeaders: true,
     windowMs: environment.GLOBAL_RATE_LIMIT_WINDOW_MS,
   });
+
+const createSensitiveRateLimit = (environment: Environment, limit: number): RequestHandler =>
+  rateLimit({
+    handler: (_request, _response, next) => {
+      next(new RateLimitError('Too many authentication attempts. Please try again later.'));
+    },
+    legacyHeaders: false,
+    limit,
+    standardHeaders: true,
+    windowMs: environment.AUTH_RATE_LIMIT_WINDOW_MS,
+  });
+
+export const createAuthenticationRateLimit = (environment: Environment): RequestHandler =>
+  createSensitiveRateLimit(environment, environment.AUTH_RATE_LIMIT_MAX);
+
+export const createOtpRateLimit = (environment: Environment): RequestHandler =>
+  createSensitiveRateLimit(environment, environment.OTP_RATE_LIMIT_MAX);

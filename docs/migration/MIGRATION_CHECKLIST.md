@@ -1,6 +1,6 @@
 # BodyTune Python-to-Express migration checklist
 
-Status: Parallel backend foundation implemented; feature/authentication migration not started
+Status: Parallel Express identity/profile/session/CSRF/SMTP and live-workout persistence foundations implemented; frontend/auth traffic cutover and full acceptance verification remain open
 
 Checklist date: 2026-07-18
 
@@ -9,8 +9,8 @@ Companion documents: [migration report](./MIGRATION_REPORT.md) and [legacy API i
 
 ## How to use this checklist
 
-- `[x]` means the audit/documentation activity was completed and verified during Phase 1.
-- `[ ]` means the activity is not complete. No unchecked implementation item should be read as partially delivered.
+- `[x]` means the activity is demonstrably implemented or verified within the scope stated by that item. It does not imply that its phase, traffic cutover, or production acceptance gate is complete.
+- `[ ]` means the activity or its full acceptance evidence is not complete. Some unchecked items have narrower completed foundations documented immediately below them.
 - Every gate needs an owner, evidence link, completion date, and reviewer before the following phase starts.
 - Keep the FastAPI application intact and runnable as the behavioral reference until the final archival gate passes.
 - Implement one vertical slice at a time. Do not combine unrelated cleanup with a feature migration.
@@ -120,18 +120,18 @@ Phase 3 foundation evidence (2026-07-18):
 - [x] Real MongoDB smoke: `/health` stays live, `/ready` reports ready while MongoDB is available, and `/ready` returns 503 after dependency loss.
 - [x] Docker Compose configuration validates.
 - [ ] Build and smoke the container image when a Docker daemon is available; the local Docker socket was absent during this phase.
-- [x] Confirm the React frontend, Python backend, and legacy databases remain unchanged and continue receiving all product traffic.
+- [x] Confirm the React frontend, Python backend, and legacy databases remained unchanged during the initial Phase 3 foundation and continued receiving all product traffic at that checkpoint.
 
 Phase 3 exit: the service foundation passes lint, typecheck, unit/integration tests, production build, and local container smoke checks while receiving no product traffic.
 
-Phase 3 exit remains open only for the container-image smoke check. Empty domain folders are intentionally not scaffolded before their vertical slices are implemented.
+Phase 3 exit remains open only for the container-image smoke check. Empty domain folders are intentionally not scaffolded before their vertical slices are implemented. The later identity/profile/workout component work recorded below does not waive that container check or any earlier approval gate.
 
 ## Phase 4: define MongoDB collections and indexes
 
-- [ ] Define `User` with normalized unique email, provider identities, optional hidden password hash, role/status, email verification, embedded one-to-one profile/nutrition goals, timezone, session version, and unique nullable `legacy_id`.
-- [ ] Store sessions in a dedicated Mongo-backed session collection with an expiry/TTL index.
-- [ ] Define hashed/HMAC-protected `OtpChallenge` records with purpose, attempt count, expiry TTL, consumption state, and no recoverable OTP value.
-- [ ] Define `WorkoutResult` and `Recommendation` ownership, indexes, generator/rule version, and result-to-recommendation idempotency.
+- [x] Define `User` with normalized unique email, provider identities, optional hidden password hash, role/status, email verification, embedded one-to-one profile/nutrition goals, timezone, session version, and unique nullable `legacy_id`.
+- [x] Store sessions in a dedicated Mongo-backed session collection with expiry/TTL behavior through `connect-mongo`.
+- [x] Define hashed/HMAC-protected `OtpChallenge` records with purpose, attempt count, expiry TTL, consumption state, and no recoverable OTP value.
+- [x] Define the implemented `WorkoutSession` replacement for separate result/recommendation writes, with ownership, history/exercise indexes, versioned embedded recommendation snapshots and unique owner/client-session idempotency.
 - [ ] Define `FoodItem` with normalized search fields, source, owner, nutrient values, aliases, and partial uniqueness for system versus user-created foods.
 - [ ] Define private `MealAsset` metadata and `DietLog` nutrient/name snapshots with owner/date indexes.
 - [ ] Define atomic `ActivityDaily` counters keyed by user, timezone/date key, and a unique compound index; add allowlisted `ActivityEvent` only if analytics/audit needs it.
@@ -146,20 +146,34 @@ Phase 4 exit: schemas, indexes, retention behavior, and safe projections are rev
 
 ## Phase 5: identity, sessions, Google OAuth, and profiles
 
-- [ ] Configure `express-session` with `connect-mongo`; store only the user identifier and minimum state in the session.
-- [ ] Use a production cookie with `Secure`, `HttpOnly`, `Path=/`, no `Domain`, an approved `SameSite` value, rotation-ready secrets, and an environment-safe name such as `__Host-...` where topology permits.
-- [ ] Regenerate the session on login/OAuth completion and destroy it on logout.
+- [x] Configure `express-session` with `connect-mongo`; store only the user identifier/session version and minimum CSRF/OAuth flow state in the session.
+- [ ] Approve the final production cookie topology and `SameSite` value, then verify `Secure`, `HttpOnly`, `Path=/`, no `Domain`, rotation-ready secrets and an environment-safe `__Host-...` name in that deployment.
+- [x] Implement host-only `HttpOnly`/`Path=/` session-cookie middleware with configurable `SameSite`, rotation-ready secrets and production validation requiring `Secure` plus an `__Host-...` name; deployment-specific approval remains open above.
+- [x] Regenerate the session on local login, registration verification, and OAuth completion; destroy it and clear matching cookie attributes on logout.
 - [ ] Invalidate sessions after password reset, role/status change, suspected compromise, and account deletion using session versioning or equivalent revocation.
-- [ ] Implement Passport Google OAuth 2.0 with state validation, verified-email handling, allowlisted return targets stored in the session, and no tokens/PII in redirect URLs.
+- [x] Increment `sessionVersion` on password reset and destroy the reset request's current session; role/status/compromise/deletion lifecycle revocation remains pending.
+- [x] Implement conditional Passport Google OAuth 2.0 with provider state validation, verified-email handling, allowlisted return targets stored in the session, and no tokens/PII in redirect URLs.
 - [ ] Implement reviewed account-linking rules that do not auto-merge an unverified or conflicting identity.
-- [ ] If local auth remains, use a modern password hash configuration and a transparent upgrade policy for approved non-exposed legacy hashes.
-- [ ] Split registration verification and password-reset purposes; a reset challenge must never create an authenticated session.
-- [ ] Hash OTP challenges with a server-side pepper, cap attempts, throttle by IP/email/purpose, consume atomically, and return non-enumerating responses.
+- [x] Implement a conservative technical linking boundary: only verified Google identities may link, and automatic linking rejects inactive, admin, or unverified existing local accounts; product/security approval of the complete lifecycle policy remains open.
+- [x] If local auth remains, use OWASP-baseline scrypt with encoded parameters and a transparent rehash policy; exposed legacy hashes are not silently accepted.
+- [x] Split registration verification and password-reset purposes; a reset challenge never creates an authenticated session.
+- [x] Hash OTP and email challenge values with a server-side pepper, cap attempts, apply route/IP limits plus email/purpose cooldowns, consume atomically, and return non-enumerating responses.
 - [ ] Remove public admin registration and the `X-ADMIN-KEY` bypass; establish a controlled, audited admin bootstrap/role process.
-- [ ] Implement CSRF protection appropriate to the chosen topology, including Origin/Referer validation and an explicit token mechanism where required.
-- [ ] Implement session-authenticated `/auth/me`, `/auth/logout`, Google start/callback, approved local auth routes, and owner-scoped `/profiles/me`.
+- [x] Restrict the replacement local registration schema to the `user` role; the legacy public-admin/static-key surface remains until coordinated cutover and a controlled admin bootstrap are complete.
+- [x] Implement CSRF protection for unsafe methods with allowlisted Origin/Referer validation, an explicit bounded session token, constant-time comparison and token rotation on authentication.
+- [x] Implement and compose session-authenticated `/auth/me`, `/auth/logout`, `/auth/csrf-token`, conditional Google start/callback, optional local auth routes, and owner-scoped `/profiles/me`.
+- [x] Add a pooled, TLS-hardened, timeout-bounded SMTP gateway with purpose-specific text/HTML OTP messages, safe provider errors, no recipient/code logging and fail-closed behavior when local auth or SMTP is unavailable.
 - [ ] Reject suspended/deleted users and re-check server-side roles for every privileged request.
+- [x] Re-check active status plus session version for each authenticated request and provide a server-side role middleware; privileged admin route policy still remains to be implemented and tested.
 - [ ] Add unit/integration/security tests for fixation, CSRF, OAuth state, open redirect, account linking, enumeration, brute force, OTP replay, session expiry, logout, and role changes.
+- [x] Pass 10 focused suites / 32 tests for password/OTP security, auth services and validation, safe user/profile mapping, session lifecycle, CSRF, SMTP, Google OAuth/return-path handling and profile behavior, with targeted lint, format, strict TypeScript and production-build checks.
+
+Phase 5 integration boundary (still open):
+
+- [ ] Verify the composed auth/profile routers against real isolated MongoDB with Supertest, including cookie persistence, CSRF bootstrap, Google callback stubs, index creation and safe external-provider failures.
+- [ ] Complete the negative matrix for fixation, open redirect, enumeration, OTP replay/concurrency, session expiry/revocation, cross-user access and role/status changes.
+- [ ] Configure and verify real Google credentials/exact callback, the selected SMTP provider/sender domain, final HTTPS origins/proxy/cookie attributes and delivery/abuse controls.
+- [ ] Migrate React from bearer JWT/localStorage and `credentials: "omit"` to session bootstrap, `credentials: "include"`, CSRF tokens, Google/local flow UX and server logout.
 
 Phase 5 exit: identity is server-derived, sessions are revocable, every auth abuse case is tested, and no bearer token or admin key is required by React.
 
@@ -169,11 +183,21 @@ Use the per-slice delivery gate below for every numbered slice. A later slice ma
 
 ### Slice 1: workout results and recommendations
 
-- [ ] Support squat, push-up, crunch, and bicep curl consistently across validation, persistence, summaries, and recommendations.
-- [ ] Derive ownership from the session; remove trusted `user_id` input and close every public result/recommendation IDOR.
-- [ ] Persist the result and generate/attach its recommendation transactionally or with an idempotent recoverable workflow.
-- [ ] Add pagination/filtering, owner/admin read/delete policies, stable snapshots, and indexes.
-- [ ] Preserve browser-side pose inference; no camera frames or landmarks are sent to the backend without a separately approved requirement.
+- [x] Support squat, push-up, crunch, and bicep curl consistently across strict validation, persistence, summaries, and deterministic recommendations.
+- [x] Derive ownership from the authenticated session; the completion DTO has no trusted `user_id`, and complete/list/get/delete/summary queries are owner-scoped.
+- [x] Persist one completed session with its recommendation snapshot through an idempotent owner/client-session upsert; retries return the original record rather than duplicate it.
+- [x] Add cursor-bounded pagination/filtering, owner-only read/soft-delete, stable pose-engine/rules/recommendation snapshots and owner/exercise/idempotency indexes. No admin access to personal workout sessions is granted by this slice.
+- [x] Preserve browser-side pose inference: camera frames, landmarks, joint angles and live inference stay local; only bounded completion metrics, allowlisted feedback tags and version metadata are sent.
+- [x] Carry the selected exercise into the live route, pin MediaPipe Tasks Vision `0.10.34` and pose model version `1`, and prepare one atomic frontend completion/retry call for all four exercises using a stable UUID.
+- [x] Add scoped validator, recommendation, service, repository and route tests for all four exercises, idempotent replay, ownership, pagination, aggregation and safe failure behavior.
+- [x] Pass 35 scoped workout tests (94.11% statements, 75.94% branches, 91.66% functions, 94.17% lines) plus affected-frontend Prettier, TypeScript and Vite production-build checks; retain the existing bundle-size warning as an open optimization concern.
+
+Slice 1 integration boundary (still open):
+
+- [ ] Verify the composed session-authenticated routes against real isolated MongoDB with Supertest, including cross-user negative cases, duplicate/concurrent completion and index behavior.
+- [ ] Complete the shared frontend session/CSRF API transport cutover before treating the prepared save call as a live user flow.
+- [ ] Add frontend component/browser coverage for selection routing, local-only inference, success/retry/idempotent replay, session expiry and camera/model failure states.
+- [ ] Update and validate the OpenAPI/consumer contract, run the full backend/frontend quality matrices together and perform a least-privilege browser smoke before cutover.
 
 ### Slice 2: food catalog, meal assets, and diet logs
 
@@ -248,7 +272,7 @@ Repeat and attach evidence for each vertical slice:
 - [ ] Add logout, Google sign-in, safe post-login return routing, callback failure UI, and session-expiry recovery.
 - [ ] Keep OAuth/session/provider errors generic and never place tokens or personal data in browser URLs, storage, telemetry, or console logs.
 - [ ] Preserve the existing UI, loading/error/empty states, and public routes during API replacement.
-- [ ] Carry the selected workout type into `/workouts/live` and persist all four supported exercises.
+- [ ] Cut over the prepared selected-workout route and four-exercise atomic persistence call to the new session-authenticated API; the code path exists, but remains unchecked until the shared session/CSRF client and browser tests are complete.
 - [ ] Pin browser inference assets/models, add CSP-compatible hosting, throttle processing, and present a usable camera/model failure path.
 - [ ] Use profile nutrition goals instead of hardcoded diet goals; cancel stale food searches and clear/reconcile uploaded assets after completion/failure.
 - [ ] Populate plan defaults from the profile and align goal enums across profile and plan forms.
