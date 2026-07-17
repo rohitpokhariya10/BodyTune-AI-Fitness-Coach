@@ -9,6 +9,11 @@ __pycache__/
 *.pyc
 *.db
 *.sqlite
+*.sqlite3
+*.db-journal*
+*.db-wal
+*.db-shm
+*.dump
 .DS_Store
 .vscode/
 .idea/
@@ -23,3 +28,6 @@ Extensions/
 *.log
 .cache/
 coverage/
+.eslintcache
+*.tsbuildinfo
+backend-node/var/

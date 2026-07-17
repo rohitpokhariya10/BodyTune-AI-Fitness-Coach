@@ -1,6 +1,6 @@
 # BodyTune Python-to-Express migration checklist
 
-Status: Phase 1 repository audit complete; migration implementation not started
+Status: Parallel backend foundation implemented; feature/authentication migration not started
 
 Checklist date: 2026-07-18
 
@@ -33,6 +33,8 @@ Companion documents: [migration report](./MIGRATION_REPORT.md) and [legacy API i
 - [ ] Record approval evidence and decision owners in an ADR or project tracker before implementation begins.
 
 Phase 1 exit gate: the audit artifacts have been presented, all blocking decisions below are resolved, and implementation is explicitly authorized.
+
+The user explicitly authorized the low-risk parallel foundation after Phase 1. Cross-functional incident, product, data, provider, privacy, and cutover approvals below remain open and still gate their dependent work.
 
 ## Gate 0: repository data exposure and immediate containment
 
@@ -90,22 +92,39 @@ Phase 2 exit: the reference backend and frontend have reproducible commands, kno
 
 ## Phase 3: scaffold `backend-node/` without changing product traffic
 
-- [ ] Create `backend-node/` beside the untouched Python backend.
-- [ ] Configure strict TypeScript, Express, Mongoose, Vitest/Jest or an approved equivalent, Supertest, ESLint, Prettier, and coverage scripts.
-- [ ] Establish `src/app.ts` as the testable app factory and `src/server.ts` as the process entry point.
+- [x] Create `backend-node/` beside the untouched Python backend.
+- [x] Configure strict TypeScript, Express, Mongoose, Jest, Supertest, ESLint, Prettier, and coverage scripts.
+- [x] Establish `src/app.ts` as the injected, testable app factory and `src/server.ts` as the process entry point.
 - [ ] Organize feature modules for auth, users/profiles, activity, workouts/results, recommendations, nutrition, plans, videos, subscriptions, admin, and health.
-- [ ] Keep controllers thin; place domain logic in services and persistence concerns in repositories/models.
-- [ ] Add schema validation for environment variables at startup and fail closed on missing production secrets.
-- [ ] Add MongoDB connection retry policy, readiness state, timeouts, graceful shutdown, and deterministic test database isolation.
-- [ ] Add request IDs, structured Pino logging, redaction, typed operational errors, a not-found handler, and a centralized error handler.
-- [ ] Add Helmet, CORS allowlists, HPP/query hardening, bounded JSON/form bodies, upload limits, and trusted-proxy configuration.
-- [ ] Add route-specific and global rate limiting, with stricter policies for login, OAuth, OTP, reset, uploads, search, and plan generation.
-- [ ] Define standard object/list/error envelopes and explicit serializers that preserve safe `/api/v1` snake_case compatibility.
-- [ ] Add `/health` liveness and `/ready` dependency readiness without exposing driver details.
-- [ ] Add an initial OpenAPI document and generate/validate TypeScript contract types where practical.
-- [ ] Prove a clean start, health request, shutdown, and failing-readiness integration test before feature code begins.
+- [x] Enforce the modular feature-layered dependency flow: routes -> controllers -> services -> repositories -> models.
+- [x] Keep controllers thin; place domain logic in services and persistence concerns in repositories/models.
+- [x] Add schema validation for environment variables at startup and fail closed on unsafe production configuration.
+- [x] Add MongoDB connection retry policy, readiness state, timeouts, graceful shutdown, and deterministic test database isolation rules.
+- [x] Add request IDs, structured Pino logging, redaction, typed operational errors, a not-found handler, and a centralized error handler.
+- [x] Add Helmet, exact CORS allowlists, HPP/query hardening, bounded JSON/form bodies, and trusted-proxy configuration.
+- [ ] Add feature-specific upload size/content limits when upload routes are migrated.
+- [x] Add global rate limiting.
+- [ ] Add stricter feature-specific limits for login, OAuth, OTP, reset, uploads, search, and plan generation with each route slice.
+- [x] Define standard object/list/error envelopes while preserving safe snake_case feature DTO compatibility at `/api/v1` boundaries.
+- [x] Add `/health` liveness and `/ready` dependency readiness without exposing driver details.
+- [x] Add an initial OpenAPI foundation document.
+- [ ] Generate or validate TypeScript contract types as product routes are added.
+- [x] Prove clean start, health/readiness requests, dependency failure behavior, and graceful shutdown against a real local MongoDB process.
+
+Phase 3 foundation evidence (2026-07-18):
+
+- [x] Clean `npm ci --ignore-scripts --no-audit` from the committed lockfile.
+- [x] Prettier, ESLint, strict TypeScript checking, and production build pass.
+- [x] Jest/Supertest: 5 suites and 24 tests pass with no detected open handles.
+- [x] Coverage gates pass: 79.84% statements, 67.29% branches, 77.21% functions, and 79% lines.
+- [x] Real MongoDB smoke: `/health` stays live, `/ready` reports ready while MongoDB is available, and `/ready` returns 503 after dependency loss.
+- [x] Docker Compose configuration validates.
+- [ ] Build and smoke the container image when a Docker daemon is available; the local Docker socket was absent during this phase.
+- [x] Confirm the React frontend, Python backend, and legacy databases remain unchanged and continue receiving all product traffic.
 
 Phase 3 exit: the service foundation passes lint, typecheck, unit/integration tests, production build, and local container smoke checks while receiving no product traffic.
+
+Phase 3 exit remains open only for the container-image smoke check. Empty domain folders are intentionally not scaffolded before their vertical slices are implemented.
 
 ## Phase 4: define MongoDB collections and indexes
 

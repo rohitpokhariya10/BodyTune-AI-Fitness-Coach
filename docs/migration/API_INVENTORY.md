@@ -160,13 +160,18 @@ The current implementation is a deterministic rules engine, not an external AI/L
 
 ## Target response contracts
 
+Envelope control fields use camelCase in the new Express API. Feature payload fields retain the safe, actively consumed snake_case names during compatibility migration and are mapped explicitly at the API boundary.
+
 Successful object response:
 
 ```json
 {
   "success": true,
+  "message": "Operation completed successfully",
   "data": {},
-  "request_id": "uuid"
+  "meta": {
+    "requestId": "uuid"
+  }
 }
 ```
 
@@ -175,15 +180,16 @@ Successful list response:
 ```json
 {
   "success": true,
+  "message": "Operation completed successfully",
   "data": [],
   "meta": {
+    "requestId": "uuid",
     "page": 1,
-    "page_size": 20,
+    "pageSize": 20,
     "total": 0,
-    "total_pages": 0,
-    "has_more": false
-  },
-  "request_id": "uuid"
+    "totalPages": 0,
+    "hasMore": false
+  }
 }
 ```
 
@@ -192,12 +198,10 @@ Error response:
 ```json
 {
   "success": false,
-  "error": {
-    "code": "ERROR_CODE",
-    "message": "Human-readable error message",
-    "details": []
-  },
-  "request_id": "uuid"
+  "message": "Human-readable error message",
+  "code": "ERROR_CODE",
+  "errors": [],
+  "requestId": "uuid"
 }
 ```
 

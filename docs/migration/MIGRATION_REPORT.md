@@ -1,6 +1,6 @@
 # BodyTune Python-to-Express migration report
 
-Status: Phase 1 complete; implementation intentionally not started
+Status: Phase 2 foundation implemented in parallel; feature migration not started
 
 Audit date: 2026-07-18
 
@@ -22,7 +22,42 @@ The recommended migration is a controlled parallel replacement:
 5. Point individual frontend features at Express only after contract, integration, authorization, and UI checks pass.
 6. Archive the Python backend and rename `backend-node/` to `backend/` only after parity, migration reconciliation, security review, and rollback rehearsal.
 
-No backend migration code was created during this phase because the supplied brief explicitly requires this analysis and proposal to be presented first.
+Phase 1 ended without backend code, as required. A later implementation authorization started the parallel foundation described below; the Python backend remains unchanged.
+
+## Phase 2 foundation implementation update
+
+On 2026-07-18, the parallel Node foundation was added under backend-node using the required modular feature-layered flow:
+
+route -> controller -> service -> repository -> model
+
+The health module is the first concrete slice. Its controller contains only HTTP translation, its service owns liveness/readiness behavior, and its repository owns the MongoDB connection/ping check. ESLint restrictions prevent controllers from importing repositories/models, services from importing Express/models, repositories from importing HTTP/services, and shared code from importing feature modules.
+
+Implemented foundation capabilities:
+
+- Node.js 24 LTS baseline, locked npm dependencies, strict TypeScript, CommonJS production output, ESLint, Prettier, Jest, ts-jest and Supertest.
+- Pure Express app factory with configuration/logger/readiness injection; server-only environment loading, MongoDB connection, listening and signal registration.
+- Zod environment validation with exact credentialed CORS origins, bounded request sizes, safe proxy configuration, isolated test-database naming, Mongo connection retry limits and production fail-closed checks.
+- Pino/Pino HTTP request logging with request IDs, response time and secret/PII redaction; Pino Pretty is development-only.
+- Helmet, HPP, exact CORS, bounded parsers, cookie parsing, Mongo operator/prototype-key rejection and a global API rate limiter. Authentication-specific limiters remain part of the authentication phase.
+- Typed errors, Zod/Mongoose/duplicate/ObjectId/parser mappings, safe production errors, development stacks, not-found handling and one standard response envelope.
+- GET /health liveness and GET /ready cached MongoDB ping readiness, with no driver/topology details returned.
+- Bounded Mongo startup retries, readiness shutdown state, graceful HTTP drain, Mongo disconnect and deterministic process termination.
+- Multi-stage non-root Dockerfile, local Mongo Compose configuration, environment example, backend setup/architecture documentation and an OpenAPI 3.1 foundation contract.
+- Database/dump/journal and generated-runtime ignore patterns. Existing tracked legacy databases were not deleted or untracked.
+
+Verification evidence:
+
+| Check | Result |
+| --- | --- |
+| npm ci --ignore-scripts --no-audit | Passed from the committed lockfile. |
+| Format / ESLint / strict TypeScript / production build | Passed. |
+| Jest and Supertest | 24 tests across five suites passed with open-handle detection. |
+| Coverage gate | Passed: 79.84% statements, 67.29% branches, 77.21% functions and 79% lines. |
+| Real Mongo smoke | Passed against an isolated temporary MongoDB: health stayed 200, readiness changed from 200 to 503 after Mongo stopped, and SIGINT completed cleanly. |
+| Docker Compose render | Passed. |
+| Docker image build | Not run because the local Docker daemon was unavailable; this remains an open foundation check. |
+
+No frontend route was pointed to Express, no authentication/product model was introduced, and no Python or SQLite implementation was removed in this foundation slice.
 
 ## Audit scope and evidence
 
@@ -375,11 +410,11 @@ Recommended deployment is same-site behind one HTTPS origin or reverse proxy, fo
 
 The first Express version should retain /api/v1, snake_case DTO fields, ISO-8601 dates and current high-value endpoint names. This avoids mixing authentication, persistence and cosmetic contract changes in one cutover. Mongo identifiers must nevertheless become a single public string id contract; every frontend DTO/service/form comparison must be updated together before a Mongo response is exposed.
 
-Use one documented response model:
+Use one documented response model. The newer implementation brief explicitly selected a camelCase envelope, while feature DTO fields remain snake_case during compatibility:
 
-- Success: data plus optional meta and request_id.
-- Paginated list: data array plus meta.page, meta.limit, meta.total and meta.has_more.
-- Failure: error.code, error.message, optional safe error.details and request_id.
+- Success: success, message, data and meta; meta contains requestId and optional pagination.
+- Paginated list: data array plus meta.page, meta.pageSize, meta.total, meta.totalPages and meta.hasMore.
+- Failure: success false plus top-level message, code, errors and requestId.
 - Empty successful delete: either consistent 204 or the standard data envelope, never feature-specific ambiguity.
 
 During the compatibility window, the frontend API client can unwrap envelopes centrally and map the new error format while individual pages retain their data shapes. Contract tests must pin every consumed path. Deprecated public/arbitrary-user paths should return a clear removal response after the frontend switches; they should not be kept merely for parity.

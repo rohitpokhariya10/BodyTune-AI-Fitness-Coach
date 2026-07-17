@@ -1,0 +1,217 @@
+openapi: 3.1.0
+info:
+  title: BodyTune API
+  version: 0.1.0
+  description: >-
+    Express and MongoDB API being introduced through the BodyTune backend migration. Product
+    endpoints remain under /api/v1; operational probes stay at the service root.
+  license:
+    name: Proprietary
+servers:
+  - url: http://localhost:9000
+    description: Local development
+tags:
+  - name: System
+    description: Liveness and dependency readiness
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Report process liveness
+      description: Does not require MongoDB or another downstream dependency to be available.
+      tags: [System]
+      responses:
+        '200':
+          description: The API process is alive.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/HealthData'
+              examples:
+                healthy:
+                  value:
+                    success: true
+                    message: Service is alive
+                    data:
+                      status: ok
+                      timestamp: '2026-07-18T12:00:00.000Z'
+                      uptime_seconds: 42
+                    meta:
+                      requestId: 01JEXAMPLE0000000000000000
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /ready:
+    get:
+      operationId: getReadiness
+      summary: Report traffic readiness
+      description: Returns a non-success status when MongoDB is unavailable.
+      tags: [System]
+      responses:
+        '200':
+          description: The API is ready to receive traffic.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ReadinessData'
+              examples:
+                ready:
+                  value:
+                    success: true
+                    message: Service is ready
+                    data:
+                      status: ready
+                      checks:
+                        database: up
+                    meta:
+                      requestId: 01JEXAMPLE0000000000000000
+        '503':
+          description: The API is alive but a required dependency is unavailable.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                unavailable:
+                  value:
+                    success: false
+                    message: Service is not ready
+                    code: DATABASE_UNAVAILABLE
+                    errors: []
+                    requestId: 01JEXAMPLE0000000000000000
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: bodytune.sid
+      description: >-
+        Server-side session identifier. Production uses a Secure, HttpOnly, host-only cookie;
+        the final cookie name may use the __Host- prefix.
+  headers:
+    RequestId:
+      description: Correlates a response with structured server logs.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+  schemas:
+    SuccessMeta:
+      type: object
+      required: [requestId]
+      properties:
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 128
+      additionalProperties: true
+    SuccessResponse:
+      type: object
+      required: [success, message, data, meta]
+      properties:
+        success:
+          const: true
+        message:
+          type: string
+        data: {}
+        meta:
+          $ref: '#/components/schemas/SuccessMeta'
+      additionalProperties: false
+    ErrorDetail:
+      type: object
+      properties:
+        field:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+      required: [message]
+      additionalProperties: false
+    ErrorResponse:
+      type: object
+      required: [success, message, code, errors, requestId]
+      properties:
+        success:
+          const: false
+        message:
+          type: string
+        code:
+          type: string
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorDetail'
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 128
+      additionalProperties: false
+    HealthData:
+      type: object
+      required: [status, timestamp, uptime_seconds]
+      properties:
+        status:
+          const: ok
+        timestamp:
+          type: string
+          format: date-time
+        uptime_seconds:
+          type: integer
+          minimum: 0
+      additionalProperties: false
+    ReadinessData:
+      type: object
+      required: [status, checks, timestamp]
+      properties:
+        status:
+          const: ready
+        timestamp:
+          type: string
+          format: date-time
+        checks:
+          type: object
+          required: [database]
+          properties:
+            database:
+              const: up
+          additionalProperties: false
+      additionalProperties: false
+  responses:
+    InternalServerError:
+      description: An unexpected failure occurred. Sensitive details are not exposed.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            internal:
+              value:
+                success: false
+                message: Internal server error
+                code: INTERNAL_SERVER_ERROR
+                errors: []
+                requestId: 01JEXAMPLE0000000000000000

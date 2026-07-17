@@ -1,0 +1,15 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+coverage
+dist
+node_modules
+npm-debug.log*
+*.log
+.DS_Store
+src/**/*.test.ts
+src/**/*.spec.ts
+src/tests
+var
